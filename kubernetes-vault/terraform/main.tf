@@ -12,10 +12,8 @@ terraform {
     }
   }
 
-  backend "k8s" {
-    secret_name     = "tf-state-vault-cluster"
-    namespace       = "default"
-    in_cluster_config  = true
+  backend "local" {
+    path = "terraform.tfstate"
   }
 }
 
@@ -180,7 +178,7 @@ resource "yandex_kubernetes_node_group" "worker" {
     }
 
     boot_disk {
-      type = var.node_disk_type
+      type = "network-hdd"
       size = var.node_disk_size
     }
 
@@ -210,13 +208,9 @@ resource "yandex_kubernetes_node_group" "worker" {
     max_unavailable = 1
   }
 
-  node_version = var.k8s_version
-
   node_labels = {
     node-type = "worker"
   }
-
-  node_taints = []
 
   maintenance_policy {
     auto_upgrade = true
@@ -252,7 +246,7 @@ resource "yandex_kubernetes_node_group" "infra" {
     }
 
     boot_disk {
-      type = var.node_disk_type
+      type = "network-ssd"
       size = var.node_disk_size
     }
 
@@ -282,19 +276,11 @@ resource "yandex_kubernetes_node_group" "infra" {
     max_unavailable = 1
   }
 
-  node_version = var.k8s_version
-
   node_labels = {
     node-role = "infra"
   }
 
-  node_taints = [
-    {
-      key    = "node-role"
-      value  = "infra"
-      effect = "NoSchedule"
-    }
-  ]
+  node_taints = ["node-role=infra:NoSchedule"]
 
   maintenance_policy {
     auto_upgrade = true
