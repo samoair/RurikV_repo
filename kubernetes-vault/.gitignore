@@ -1,0 +1,31 @@
+# Terraform files
+*.tfstate
+*.tfstate.*
+*.tfvars.local
+.terraform/
+.terraform.lock.hcl
+crash.log
+crash.*.log
+
+# Vault initialization files
+vault-init.json
+vault-root-token.txt
+k8s-ca.crt
+
+# IDE files
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Log files
+*.log
+
+# Temporary files
+tmp/
+temp/

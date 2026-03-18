@@ -1,0 +1,62 @@
+# ============================================================================
+# ServiceAccount and RBAC for Vault Kubernetes Authentication
+# This creates the service account that Vault will use to authenticate pods
+# ============================================================================
+
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: vault-auth
+  namespace: vault
+  labels:
+    app: vault
+    project: otus-k8s-vault
+
+---
+# ClusterRoleBinding to grant vault-auth service account
+# the system:auth-delegator role, which allows it to authenticate
+# other service accounts and validate their tokens
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: vault-auth-delegator
+  labels:
+    app: vault
+    project: otus-k8s-vault
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: system:auth-delegator
+subjects:
+  - kind: ServiceAccount
+    name: vault-auth
+    namespace: vault
+
+---
+# Optional: RoleBinding to give vault-auth access to vault secrets
+# This allows the External Secrets Operator to access the vault-auth token
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: vault-auth-secrets
+  namespace: vault
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: vault-secrets-reader
+subjects:
+  - kind: ServiceAccount
+    name: external-secrets
+    namespace: vault
+
+---
+# Role to allow reading secrets in vault namespace
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: vault-secrets-reader
+  namespace: vault
+rules:
+  - apiGroups: [""]
+    resources: ["secrets"]
+    verbs: ["get", "list", "watch"]

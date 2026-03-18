@@ -1,0 +1,119 @@
+# ============================================================================
+# Consul Helm Values for HA mode in Kubernetes
+# Installation: helm install consul hashicorp/consul -n consul --create-namespace -f consul-values.yaml
+# ============================================================================
+
+# Global settings
+global:
+  # Enable Consul on all nodes
+  enabled: true
+  # Name prefix for all Consul resources
+  name: consul
+
+  # Image to use for Consul
+  image: "hashicorp/consul:1.19.2"
+
+  # Enable Consul Raft integration with Vault
+  # This allows Vault to use Consul as a storage backend
+  logs:
+    # Log level
+    level: "INFO"
+
+# Datacenter configuration
+datacenter: "dc1"
+
+# Enable the Consul UI
+ui:
+  enabled: true
+  # Service type for the UI
+  service:
+    type: "LoadBalancer"
+
+# Enable Consul Connect for service mesh (optional, not used in this homework)
+connectInject:
+  enabled: false
+
+# Client configuration
+client:
+  enabled: true
+  # Join all Consul clients to the servers
+  join: ["consul-server"]
+
+# Server configuration for HA mode
+server:
+  enabled: true
+  # Number of server replicas - 3 for HA mode
+  replicas: 3
+
+  # Server storage backend
+  storage: "raft"
+
+  # Bootstrap expectations - ensures all 3 servers are available before bootstrapping
+  bootstrapExpect: 3
+
+  # Configure server resources
+  resources:
+    requests:
+      memory: "256Mi"
+      cpu: "100m"
+    limits:
+      memory: "512Mi"
+      cpu: "500m"
+
+  # Node affinity to schedule servers on infra nodes
+  affinity: |
+    podAntiAffinity:
+      requiredDuringSchedulingIgnoredDuringExecution:
+        - labelSelector:
+            matchLabels:
+              app: consul
+              component: server
+          topologyKey: kubernetes.io/hostname
+
+  # Tolerations to allow scheduling on tainted infra nodes
+  tolerations:
+    - key: "node-role"
+      operator: "Equal"
+      value: "infra"
+      effect: "NoSchedule"
+
+  # Node selector to prefer infra nodes
+  nodeSelector:
+    node-role: "infra"
+
+  # Connect to the leader via HTTPS
+  connect: false
+
+# Replica set configuration for HA
+replicaSet:
+  enabled: false
+
+# Sync catalog to Kubernetes services (optional)
+syncCatalog:
+  enabled: false
+
+# Prometheus metrics (optional)
+prometheus:
+  enabled: false
+
+# Enable Consul service discovery
+enabled: true
+
+# ACL configuration (optional - not used in this homework for simplicity)
+acl:
+  enabled: false
+  # Bootstrap ACLs
+  bootstrapToken:
+    enabled: false
+
+# TLS configuration (optional - not used in this homework for simplicity)
+tls:
+  enabled: false
+
+# Configured Kubernetes service accounts
+authMethod:
+  enabled: false
+
+# DNS configuration
+dns:
+  enabled: true

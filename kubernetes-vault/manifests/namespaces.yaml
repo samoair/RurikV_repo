@@ -1,0 +1,20 @@
+# ============================================================================
+# Namespaces for Consul and Vault
+# ============================================================================
+
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: consul
+  labels:
+    name: consul
+    project: otus-k8s-vault
+
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: vault
+  labels:
+    name: vault
+    project: otus-k8s-vault

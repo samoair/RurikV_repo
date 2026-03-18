@@ -1,1 +1,5 @@
-.idea/
+.env/
+.terraform/
+**/terraform.tfvars
+**/terraform.tfstate**
+**/.terraform**
