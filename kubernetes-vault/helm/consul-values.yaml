@@ -27,7 +27,7 @@ server:
 
 client:
   enabled: true
-  join: ["consul-server"]
+  join: ["consul-consul-server"]
   tolerations: |
     - key: "node-role"
       operator: "Equal"

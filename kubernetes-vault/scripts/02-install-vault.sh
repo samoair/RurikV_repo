@@ -28,6 +28,10 @@ fi
 echo "Creating vault namespace..."
 kubectl create namespace vault --dry-run=client -o yaml | kubectl apply -f -
 
+# Clean up leftover webhook from previous installs (if any)
+kubectl delete mutatingwebhookconfiguration vault-agent-injector-cfg --ignore-not-found --force --grace-period=0 2>/dev/null || true
+sleep 2
+
 # Add HashiCorp Helm repository (if not already added)
 echo "Ensuring HashiCorp Helm repository..."
 helm repo add hashicorp https://helm.releases.hashicorp.com 2>/dev/null || true

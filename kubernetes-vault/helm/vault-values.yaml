@@ -1,154 +1,57 @@
 # ============================================================================
 # Vault Helm Values for HA mode with Consul storage backend
 # Installation: helm install vault hashicorp/vault -n vault --create-namespace -f vault-values.yaml
+# IMPORTANT: After install, patch the ConfigMap to fix Consul address:
+#   kubectl get configmap vault-config -n vault -o json | \
+#     python3 -c "import json,sys; cm=json.load(sys.stdin); \
+#     cm['data']['extraconfig-from-values.hcl']=cm['data']['extraconfig-from-values.hcl'].replace('HOST_IP:8500','consul-consul-server.consul.svc.cluster.local:8500'); \
+#     json.dump(cm,sys.stdout)" | kubectl apply -f -
+#   kubectl delete pod -n vault vault-0 vault-1 vault-2
 # ============================================================================
 
 # Global settings
 global:
   enabled: true
-  # Namespace where Vault is installed
-  namespace: "vault"
-
-  # Image to use for Vault
-  image: "hashicorp/vault:1.18.2"
-
-  # Enable TLS (optional - set to false for development)
   tlsDisable: true
 
 # Enable Vault UI
 ui:
   enabled: true
-  # Service type for the UI
   serviceType: "LoadBalancer"
-  # Set external port for UI access
-  servicePort: 8200
-  targetPort: 8200
 
 # Server configuration
 server:
   enabled: true
 
-  # Number of Vault replicas
-  replicas: 3
+  # Disable standalone mode (we use HA)
+  standalone:
+    enabled: false
 
-  # Storage backend - Consul for HA mode
-  storage:
-    consul:
-      # Consul address (within the cluster)
-      address: "consul-server.consul.svc.cluster.local:8500"
-      # Path in Consul to store Vault data
-      path: "vault/"
-      # Consul service for the Vault cluster
-      service: "vault"
-      # Consul token (empty for default ACL disabled)
-      token: ""
+  # HA configuration with Consul storage
+  ha:
+    enabled: true
+    replicas: 3
+    raft:
+      enabled: false
 
-      # HA configuration
-      haEnabled: "true"
-      # Redirect traffic to the active node
-      redirectAddr: "https://{{ .System.Identity }}:8200"
-
-  # Listener configuration
-  listener:
-    tcp:
-      address: "[::]:8200"
-      cluster_address: "[::]:8201"
-      tls_disable: "true"
-
-  # Raft configuration (alternative to Consul - not used, we use Consul)
-  # storage:
-  #   raft:
-  #     path: "/vault/file"
-
-  # Resources for Vault pods
-  resources:
-    requests:
-      memory: "256Mi"
-      cpu: "100m"
-    limits:
-      memory: "512Mi"
-      cpu: "500m"
-
-  # Affinity rules to spread Vault pods across nodes
-  affinity: |
-    podAntiAffinity:
-      requiredDuringSchedulingIgnoredDuringExecution:
-        - labelSelector:
-            matchLabels:
-              app.kubernetes.io/name: vault
-              app.kubernetes.io/instance: vault
-          topologyKey: kubernetes.io/hostname
-
-  # Tolerations to allow scheduling on tainted infra nodes
-  tolerations:
+  # Tolerations for infra nodes
+  tolerations: |
     - key: "node-role"
       operator: "Equal"
       value: "infra"
       effect: "NoSchedule"
 
-  # Node selector to prefer infra nodes
-  nodeSelector:
+  # Node selector for infra nodes
+  nodeSelector: |
     node-role: "infra"
 
   # Update strategy
   updateStrategyType: "OnDelete"
 
-  # Service account for Vault
-  serviceAccount:
-    create: true
-    name: "vault"
+# Disable injector (not needed for this homework)
+injector:
+  enabled: false
 
-# Data persistence (for file storage - not used with Consul backend)
-# dataStorage:
-#   enabled: false
-#   size: 10Gi
-#   storageClass: ""
-#   mountPath: "/vault/data"
-
-# Audit storage (optional)
-# auditStorage:
-#   enabled: false
-#   size: 10Gi
-#   storageClass: ""
-#   mountPath: "/vault/audit"
-
-# Configure Vault to use KMS unseal (optional - not used, manual unseal)
-# unseal:
-#   options:
-#     - " kms"
-
-# Enable service headers
-# service:
-#   enabled: true
-
-# Ingress configuration (optional)
-# ingress:
-#   enabled: false
-#   ingressClassName: "nginx"
-#   activeService: true
-#   hosts:
-#     - host: vault.example.com
-#       paths:
-#         - /
-
-# Prometheus monitoring (optional)
-# prometheus:
-#   enabled: false
-
-# Console logs
-logLevel: "info"
-logFormat: "standard"
-
-# Extra environment variables
-# env:
-#   - name: VAULT_LOG_LEVEL
-#     value: "debug"
-
-# Enable standalone mode (not for HA)
-# standalone:
-#   enabled: false
-
-# Extra annotations
-annotations:
-  prometheus.io/scrape: "true"
-  prometheus.io/port: "8200"
+# Disable CSI (not needed)
+csi:
+  enabled: false
