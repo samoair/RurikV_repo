@@ -24,75 +24,83 @@ vault_exec() {
     kubectl exec -n vault "$VAULT_POD" -- vault "$@"
 }
 
+# Function to call Vault HTTP API inside the pod (for operations that need TTY)
+vault_api() {
+    local method=$1
+    local path=$2
+    local data=$3
+    if [ -n "$data" ]; then
+        kubectl exec -n vault "$VAULT_POD" -- /bin/sh -c \
+            "wget -q -O - --method=$method --body-data='$data' --header='Content-Type: application/json' http://127.0.0.1:8200/v1$path"
+    else
+        kubectl exec -n vault "$VAULT_POD" -- /bin/sh -c \
+            "wget -q -O - --method=$method http://127.0.0.1:8200/v1$path"
+    fi
+}
+
 # Check if Vault is already initialized
-if vault_exec status -format json 2>/dev/null | grep -q '"initialized":true'; then
+INIT_STATUS=$(vault_exec status 2>&1 || true)
+if echo "$INIT_STATUS" | grep -q 'Initialized.*true'; then
     echo "Vault is already initialized."
     echo "Skipping initialization."
 else
     echo "Initializing Vault..."
-    # Initialize Vault and save keys
-    vault_exec init -key-shares=5 -key-threshold=3 -format=json > vault-init.json
+    # Use HTTP API for init (avoids TTY requirement)
+    INIT_RESPONSE=$(vault_api POST "sys/init" '{"secret_shares":1,"secret_threshold":1}')
+    echo "$INIT_RESPONSE" | python3 -m json.tool
+    echo "$INIT_RESPONSE" > vault-init.json
 
-    echo "========================================="
-    echo "VAULT INITIALIZED!"
-    echo "========================================="
     echo ""
     echo "Unseal keys have been saved to: vault-init.json"
     echo ""
-    echo "IMPORTANT: Keep these keys safe! They are needed to unseal Vault."
-    echo ""
 
-    # Extract unseal keys and root token
-    UNSEAL_KEYS=$(jq -r '.unseal_keys_b64[]' vault-init.json)
-    ROOT_TOKEN=$(jq -r '.root_token' vault-init.json)
-
-    echo "Root Token: $ROOT_TOKEN"
-    echo ""
-    echo "Unseal Keys:"
-    echo "$UNSEAL_KEYS"
-    echo ""
-
-    # Save root token to file
+    # Save root token
+    ROOT_TOKEN=$(echo "$INIT_RESPONSE" | python3 -c "import json,sys; print(json.load(sys.stdin)['root_token'])")
     echo "$ROOT_TOKEN" > vault-root-token.txt
     chmod 600 vault-root-token.txt
     echo "Root token saved to: vault-root-token.txt"
+fi
 
-    # Unseal Vault (need 3 keys out of 5)
+# Read root token
+ROOT_TOKEN=$(cat vault-root-token.txt 2>/dev/null)
+
+# Check if Vault is sealed and unseal if needed
+SEAL_STATUS=$(vault_exec status 2>&1 || true)
+if echo "$SEAL_STATUS" | grep -q 'Sealed.*true'; then
+    if [ ! -f vault-init.json ]; then
+        echo "Error: Vault is sealed but vault-init.json not found. Cannot unseal."
+        exit 1
+    fi
+
     echo "========================================="
     echo "Unsealing Vault..."
     echo "========================================="
 
-    # Get first 3 unseal keys
-    KEY1=$(echo "$UNSEAL_KEYS" | sed -n '1p')
-    KEY2=$(echo "$UNSEAL_KEYS" | sed -n '2p')
-    KEY3=$(echo "$UNSEAL_KEYS" | sed -n '3p')
+    # Unseal using HTTP API (vault operator unseal requires TTY)
+    UNSEAL_KEY=$(jq -r '.unseal_keys_b64[0]' vault-init.json)
+    UNSEAL_RESULT=$(kubectl exec -n vault "$VAULT_POD" -- /bin/sh -c \
+        "wget -q -O - --post-data='{\"key\": \"$UNSEAL_KEY\"}' --header='Content-Type: application/json' http://127.0.0.1:8200/v1/sys/unseal")
 
-    echo "Unsealing with key 1..."
-    vault_exec operator unseal "$KEY1" > /dev/null
-
-    echo "Unsealing with key 2..."
-    vault_exec operator unseal "$KEY2" > /dev/null
-
-    echo "Unsealing with key 3..."
-    vault_exec operator unseal "$KEY3" > /dev/null
+    if echo "$UNSEAL_RESULT" | grep -q '"sealed":false'; then
+        echo "Vault unsealed successfully!"
+    else
+        echo "WARNING: Vault may still be sealed."
+        echo "Result: $UNSEAL_RESULT"
+    fi
 
     echo ""
-    echo "Vault unsealed! Status:"
-    vault_exec status
+    echo "Vault status:"
+    vault_exec status || true
+else
+    echo "Vault is already unsealed."
 fi
 
-# Export VAULT_ADDR and VAULT_TOKEN for local commands
-export VAULT_ADDR='http://127.0.0.1:8200'
-ROOT_TOKEN=$(cat vault-root-token.txt 2>/dev/null)
-export VAULT_TOKEN="$ROOT_TOKEN"
-
-# Port-forward to Vault
+# Port-forward to Vault for local API access
 echo ""
 echo "Setting up port-forward to Vault..."
 kubectl port-forward -n vault "$VAULT_POD" 8200:8200 > /dev/null 2>&1 &
 PF_PID=$!
 sleep 3
-
 echo "Port-forward established (PID: $PF_PID)"
 
 # Cleanup function
@@ -101,31 +109,43 @@ cleanup() {
 }
 trap cleanup EXIT
 
-# Enable KV secrets engine at otus/
+# Configure Vault via port-forward using local curl
+VAULT_ADDR="http://127.0.0.1:8200"
+VAULT_HEADER="X-Vault-Token: $ROOT_TOKEN"
+
 echo ""
 echo "========================================="
 echo "Configuring Vault..."
 echo "========================================="
 
-echo "Enabling KV secrets engine at /otus..."
-vault_exec secrets enable -path=otus kv-v2
+# Check if KV engine already enabled at /otus
+echo "Checking KV secrets engine at /otus..."
+MOUNTS=$(curl -s -H "$VAULT_HEADER" "$VAULT_ADDR/v1/sys/mounts")
+if echo "$MOUNTS" | python3 -c "import json,sys; data=json.load(sys.stdin); sys.exit(0 if 'otus/' in data.get('data',{}) else 1)" 2>/dev/null; then
+    echo "KV engine already enabled at /otus. Skipping."
+else
+    echo "Enabling KV secrets engine at /otus..."
+    curl -s -X POST -H "$VAULT_HEADER" "$VAULT_ADDR/v1/sys/mounts/otus" \
+        -d '{"type":"kv-v2"}'
+    echo "KV engine enabled."
+fi
 
 # Create secret otus/cred
 echo "Creating secret otus/cred..."
-vault_exec kv put otus/cred username="otus" password="asajkjkahs"
+curl -s -X POST -H "$VAULT_HEADER" -H "Content-Type: application/json" \
+    "$VAULT_ADDR/v1/otus/data/cred" \
+    -d '{"data":{"username":"otus","password":"asajkjkahs"}}'
+echo "Secret created."
 
-echo "Secret created. Verifying:"
-vault_exec kv get otus/cred
+# Verify secret
+echo ""
+echo "Verifying secret:"
+curl -s -H "$VAULT_HEADER" "$VAULT_ADDR/v1/otus/data/cred" | python3 -m json.tool
 
 echo ""
 echo "========================================="
 echo "Vault initialization completed!"
 echo "========================================="
-echo ""
-echo "To interact with Vault locally:"
-echo "  export VAULT_ADDR='http://127.0.0.1:8200'"
-echo "  export VAULT_TOKEN=$(cat vault-root-token.txt)"
-echo "  vault kv get otus/cred"
 echo ""
 echo "Next step: Run ./04-configure-k8s-auth.sh"
 echo ""

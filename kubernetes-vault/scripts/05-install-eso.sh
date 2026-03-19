@@ -44,6 +44,20 @@ echo "========================================="
 echo "Applying Kubernetes manifests..."
 echo "========================================="
 
+# Ensure Vault is unsealed before proceeding
+echo "Checking Vault seal status..."
+VAULT_POD=$(kubectl get pods -n vault -l app.kubernetes.io/name=vault -o jsonpath='{.items[0].metadata.name}')
+SEAL_STATUS=$(kubectl exec -n vault "$VAULT_POD" -- vault status 2>&1 || true)
+if echo "$SEAL_STATUS" | grep -q 'Sealed.*true'; then
+    echo "Vault is sealed. Unsealing..."
+    UNSEAL_KEY=$(jq -r '.unseal_keys_b64[0]' vault-init.json)
+    kubectl exec -n vault "$VAULT_POD" -- /bin/sh -c \
+        "wget -q -O - --post-data='{\"key\": \"$UNSEAL_KEY\"}' --header='Content-Type: application/json' http://127.0.0.1:8200/v1/sys/unseal" > /dev/null
+    echo "Vault unsealed."
+else
+    echo "Vault is unsealed."
+fi
+
 # Apply namespaces (should already exist)
 echo "Applying namespaces..."
 kubectl apply -f ../manifests/namespaces.yaml
