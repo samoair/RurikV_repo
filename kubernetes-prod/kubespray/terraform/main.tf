@@ -38,9 +38,9 @@ resource "yandex_compute_instance" "master" {
 
   boot_disk {
     initialize_params {
-      image_id = "fd81radk00nmm2jpqh94" # Ubuntu 22.04 LTS v20251229
+      image_id = "fd833ivvmqp6cuq7shpc" # Ubuntu 24.04 LTS v20250106
       size     = 64
-      type     = "network-ssd"
+      type     = "network-hdd"
     }
   }
 
@@ -69,9 +69,9 @@ resource "yandex_compute_instance" "worker" {
 
   boot_disk {
     initialize_params {
-      image_id = "fd81radk00nmm2jpqh94"
+      image_id = "fd833ivvmqp6cuq7shpc" # Ubuntu 24.04 LTS v20250106
       size     = 64
-      type     = "network-ssd"
+      type     = "network-hdd"
     }
   }
 
