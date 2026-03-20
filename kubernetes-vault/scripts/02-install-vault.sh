@@ -147,26 +147,39 @@ echo "========================================="
 ROOT_TOKEN=$(cat vault-root-token.txt 2>/dev/null)
 UNSEAL_KEY=$(jq -r '.keys_base64[0]' vault-init.json)
 
-# Check current seal status
-SEAL_RESPONSE=$(kubectl exec -n vault "$VAULT_POD" -- /bin/sh -c \
-    "wget -q -O - http://127.0.0.1:8200/v1/sys/seal-status" 2>/dev/null || true)
-
-if echo "$SEAL_RESPONSE" | grep -q '"sealed":false'; then
-    echo "Vault is already unsealed."
-elif echo "$SEAL_RESPONSE" | grep -q '"sealed":true'; then
-    echo "Vault is sealed. Unsealing..."
-    UNSEAL_RESULT=$(kubectl exec -n vault "$VAULT_POD" -- /bin/sh -c \
-        "wget -q -O - --post-data='{\"key\": \"$UNSEAL_KEY\"}' --header='Content-Type: application/json' http://127.0.0.1:8200/v1/sys/unseal" 2>/dev/null || true)
-    if echo "$UNSEAL_RESULT" | grep -q '"sealed":false'; then
-        echo "Vault unsealed successfully!"
+# Unseal ALL vault pods for HA (each pod has its own seal)
+echo "Unsealing all Vault pods..."
+for POD in $(kubectl get pods -n vault -l app.kubernetes.io/name=vault -o jsonpath='{.items[*].metadata.name}'); do
+    SEAL_RESPONSE=$(kubectl exec -n vault "$POD" -- /bin/sh -c \
+        "wget -q -O - http://127.0.0.1:8200/v1/sys/seal-status" 2>/dev/null || true)
+    if echo "$SEAL_RESPONSE" | grep -q '"sealed":false'; then
+        echo "  $POD: already unsealed"
     else
-        echo "WARNING: Vault unseal may have failed."
-        echo "$UNSEAL_RESULT"
+        echo -n "  $POD: unsealing..."
+        UNSEAL_RESULT=$(kubectl exec -n vault "$POD" -- /bin/sh -c \
+            "wget -q -O - --post-data='{\"key\": \"$UNSEAL_KEY\"}' --header='Content-Type: application/json' http://127.0.0.1:8200/v1/sys/unseal" 2>/dev/null || true)
+        if echo "$UNSEAL_RESULT" | grep -q '"sealed":false'; then
+            echo " done"
+        else
+            echo " FAILED"
+            echo "    $UNSEAL_RESULT"
+        fi
     fi
-else
-    echo "Cannot determine seal status (response: $SEALED). Waiting..."
-    sleep 5
-fi
+done
+
+# Wait for Vault HA leader election
+echo ""
+echo "Waiting for Vault leader election..."
+for i in $(seq 1 30); do
+    HA_STATUS=$(kubectl exec -n vault "$VAULT_POD" -- /bin/sh -c \
+        "wget -q -O - http://127.0.0.1:8200/v1/sys/health" 2>/dev/null || true)
+    if echo "$HA_STATUS" | grep -q '"initialized":true'; then
+        echo "  Vault leader elected and ready."
+        break
+    fi
+    echo -n "  Waiting... ($i/30)"
+    sleep 2
+done
 
 # ============================================================================
 # Configure Vault: KV engine + secret
