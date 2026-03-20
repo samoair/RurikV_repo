@@ -1,0 +1,18 @@
+---
+# CNI: use Flannel as required
+kube_network_plugin: flannel
+
+# Pod and Service CIDRs (Kubespray defaults, explicit for clarity)
+kube_service_addresses: 10.233.0.0/18
+kube_pods_subnet: 10.233.64.0/18
+
+# Add master public IPs to API server certificates for external access
+# (populated by 02-generate-inventory.sh, or set manually)
+# supplementary_addresses_in_ssl_keys:
+#   - 51.250.x.x
+#   - 51.250.y.y
+#   - 51.250.z.z
+
+# Download kubeconfig and kubectl binary to localhost after deploy
+kubeconfig_localhost: true
+kubectl_localhost: true

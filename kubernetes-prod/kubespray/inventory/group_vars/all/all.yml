@@ -1,0 +1,7 @@
+---
+# Load balancer: nginx proxy on each node (default Kubespray behavior)
+loadbalancer_apiserver_localhost: true
+loadbalancer_apiserver_type: nginx
+
+# Disable unattended-upgrades to avoid dpkg lock conflicts
+upgrade_no_daemon: true
