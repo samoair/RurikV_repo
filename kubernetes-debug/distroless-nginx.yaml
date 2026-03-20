@@ -5,8 +5,13 @@ metadata:
   labels:
     app: distroless-nginx
 spec:
+  shareProcessNamespace: true
   containers:
   - name: nginx
     image: kyos0109/nginx-distroless
     ports:
     - containerPort: 80
+    securityContext:
+      capabilities:
+        add:
+        - SYS_PTRACE

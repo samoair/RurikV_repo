@@ -18,12 +18,21 @@ metadata:
   labels:
     app: distroless-nginx
 spec:
+  shareProcessNamespace: true
   containers:
   - name: nginx
     image: kyos0109/nginx-distroless
     ports:
     - containerPort: 80
+    securityContext:
+      capabilities:
+        add:
+        - SYS_PTRACE
 ```
+
+Key fields:
+- `shareProcessNamespace: true` — all containers in the pod see each other's processes (required for `kubectl debug --share-processes` and `strace`)
+- `SYS_PTRACE` capability — allows `ptrace()` syscalls needed by `strace`
 
 ### Apply and verify:
 
@@ -143,19 +152,23 @@ Expected log output:
 
 ## 5. Bonus: strace on the Nginx Master Process
 
-`strace` traces system calls made by a process. Requirements:
+`strace` traces system calls made by a process. To make it work, three things are needed:
 
-1. **`shareProcessNamespace` must be enabled** — the debug container must see the nginx processes.
-2. **The nginx process must be visible** — find the PID of the nginx master process.
-3. **`strace` must be installed** — the debug image must contain it (e.g., `nicolaka/netshoot` includes it).
+1. **`shareProcessNamespace: true`** on the pod spec — so the debug container can see all processes.
+2. **`SYS_PTRACE` capability** on the nginx container — without it, `ptrace()` calls fail with `Operation not permitted`.
+3. **`strace` in the debug image** — `nicolaka/netshoot` includes it.
 
 ### Steps:
 
 ```bash
-# Step 1: Attach a debug container with shared PID namespace
+# Step 1: Delete and re-deploy the pod with the updated manifest
+kubectl delete pod distroless-nginx
+kubectl apply -f distroless-nginx.yaml
+
+# Step 2: Attach a debug container with shared PID namespace
 kubectl debug -it distroless-nginx --image=nicolaka/netshoot --target=nginx --share-processes
 
-# Step 2: Find the nginx master process PID
+# Step 3: Find the nginx master process PID
 ps aux | grep nginx
 ```
 
@@ -165,7 +178,7 @@ root         1  0.0  0.1  12060  5648 ?        Ss   12:00   0:00 nginx: master p
 ```
 
 ```bash
-# Step 3: Run strace on PID 1 (nginx master)
+# Step 4: Run strace on PID 1 (nginx master)
 strace -p 1
 ```
 
@@ -187,8 +200,6 @@ read(10, "GET / HTTP/1.1\r\nHost: localhost:8"..., 1024) = 75
 ...
 write(10, "HTTP/1.1 200 OK\r\nServer: nginx/1."..., 244) = 244
 ```
-
-> **Note:** If `strace` fails with `Ptrace attach: Operation not permitted`, ensure the pod has `securityContext.allowPrivilegeEscalation` or use a privileged debug container.
 
 ---
 
