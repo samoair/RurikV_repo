@@ -30,6 +30,8 @@ helm upgrade --install external-secrets external-secrets/external-secrets \
 
 echo "Waiting for ESO pods to be ready..."
 kubectl wait --for=condition=ready pod -l app.kubernetes.io/name=external-secrets -n vault --timeout=300s
+# Also wait for webhook pod (needed for CRD validation)
+kubectl wait --for=condition=ready pod -l app.kubernetes.io/name=external-secrets-webhook -n vault --timeout=300s 2>/dev/null || true
 
 echo "========================================="
 echo "External Secrets Operator installed!"
@@ -50,7 +52,7 @@ VAULT_POD=$(kubectl get pods -n vault -l app.kubernetes.io/name=vault -o jsonpat
 SEAL_STATUS=$(kubectl exec -n vault "$VAULT_POD" -- vault status 2>&1 || true)
 if echo "$SEAL_STATUS" | grep -q 'Sealed.*true'; then
     echo "Vault is sealed. Unsealing..."
-    UNSEAL_KEY=$(jq -r '.unseal_keys_b64[0]' vault-init.json)
+    UNSEAL_KEY=$(jq -r '.keys_base64[0]' vault-init.json)
     kubectl exec -n vault "$VAULT_POD" -- /bin/sh -c \
         "wget -q -O - --post-data='{\"key\": \"$UNSEAL_KEY\"}' --header='Content-Type: application/json' http://127.0.0.1:8200/v1/sys/unseal" > /dev/null
     echo "Vault unsealed."

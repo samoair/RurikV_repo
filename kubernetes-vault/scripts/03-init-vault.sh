@@ -31,7 +31,7 @@ vault_api() {
     local data=$3
     if [ -n "$data" ]; then
         kubectl exec -n vault "$VAULT_POD" -- /bin/sh -c \
-            "wget -q -O - --method=$method --body-data='$data' --header='Content-Type: application/json' http://127.0.0.1:8200/v1$path"
+            "wget -q -O - --post-data='$data' --header='Content-Type: application/json' http://127.0.0.1:8200/v1$path"
     else
         kubectl exec -n vault "$VAULT_POD" -- /bin/sh -c \
             "wget -q -O - --method=$method http://127.0.0.1:8200/v1$path"
@@ -77,7 +77,7 @@ if echo "$SEAL_STATUS" | grep -q 'Sealed.*true'; then
     echo "========================================="
 
     # Unseal using HTTP API (vault operator unseal requires TTY)
-    UNSEAL_KEY=$(jq -r '.unseal_keys_b64[0]' vault-init.json)
+    UNSEAL_KEY=$(jq -r '.keys_base64[0]' vault-init.json)
     UNSEAL_RESULT=$(kubectl exec -n vault "$VAULT_POD" -- /bin/sh -c \
         "wget -q -O - --post-data='{\"key\": \"$UNSEAL_KEY\"}' --header='Content-Type: application/json' http://127.0.0.1:8200/v1/sys/unseal")
 
