@@ -11,7 +11,3 @@ spec:
     image: kyos0109/nginx-distroless
     ports:
     - containerPort: 80
-    securityContext:
-      capabilities:
-        add:
-        - SYS_PTRACE

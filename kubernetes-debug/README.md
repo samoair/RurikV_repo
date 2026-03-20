@@ -24,15 +24,9 @@ spec:
     image: kyos0109/nginx-distroless
     ports:
     - containerPort: 80
-    securityContext:
-      capabilities:
-        add:
-        - SYS_PTRACE
 ```
 
-Key fields:
-- `shareProcessNamespace: true` — all containers in the pod see each other's processes (required for `kubectl debug --share-processes` and `strace`)
-- `SYS_PTRACE` capability — allows `ptrace()` syscalls needed by `strace`
+`shareProcessNamespace: true` allows debug containers to see all processes in the pod (required for `kubectl debug --share-processes` and `strace`).
 
 ### Apply and verify:
 
@@ -71,7 +65,7 @@ drwxr-xr-x    1 root root  29 Jan  1  1970 conf.d
 -rw-r--r--    1 root root  78 Jan  1  1970 mime.types
 lrwxrwxrwx    1 root root   0 Jan  1  1970 modules -> /usr/lib/nginx/modules
 -rw-r--r--    1 root root 263 Jan  1  1970 nginx.conf
--rw-r--r--    1 root root 636 Jan  1  1970 win-utf
+-rw-r--r--    1 root root  636 Jan  1  1970 win-utf
 ```
 
 ---
@@ -150,56 +144,118 @@ Expected log output:
 
 ---
 
-## 5. Bonus: strace on the Nginx Master Process
+## 5. Bonus: strace on the Nginx Process
 
-`strace` traces system calls made by a process. To make it work, three things are needed:
+`strace` traces system calls made by a process.
 
-1. **`shareProcessNamespace: true`** on the pod spec — so the debug container can see all processes.
-2. **`SYS_PTRACE` capability** on the nginx container — without it, `ptrace()` calls fail with `Operation not permitted`.
-3. **`strace` in the debug image** — `nicolaka/netshoot` includes it.
+### Why plain `kubectl debug` doesn't work
+
+Running `strace -p 1` inside an ephemeral debug container fails with:
+```
+strace: attach: ptrace(PTRACE_SEIZE, 1): Operation not permitted
+```
+
+**Root cause**: `kubectl debug` creates the ephemeral container with a default security context. The default AppArmor and seccomp profiles (`runtime/default`) block the `ptrace` syscall regardless of capabilities. Setting `SYS_PTRACE` on the nginx container does not help — `strace` runs in the debug container, which needs its own elevated privileges.
+
+`kubectl debug` has no `--privileged` flag for pod debugging, and `kubectl proxy`+`curl` PATCH to the `ephemeralcontainers` subresource may not work on all Kubernetes versions/distributions.
+
+### Solution: Use the node-level debug pod
+
+Since the node debug pod (from step 4) is already privileged via `--profile=sysadmin`, we can run `strace` from there. The key steps:
+
+1. **Node debug pod must be privileged** — granted by `--profile=sysadmin`
+2. **Find the nginx process host PID** — use `pidof nginx` inside the node debug pod (hostPID is shared)
+3. **Trace the worker process** — nginx master delegates connections to workers; `strace` on the master shows no I/O during requests
 
 ### Steps:
 
 ```bash
-# Step 1: Delete and re-deploy the pod with the updated manifest
-kubectl delete pod distroless-nginx
-kubectl apply -f distroless-nginx.yaml
+# Step 1: Get the pod IP (needed for requests from the node debug pod)
+POD_IP=$(kubectl get pod distroless-nginx -o jsonpath='{.status.podIP}')
 
-# Step 2: Attach a debug container with shared PID namespace
-kubectl debug -it distroless-nginx --image=nicolaka/netshoot --target=nginx --share-processes
+# Step 2: Get the node name
+NODE_NAME=$(kubectl get pod distroless-nginx -o jsonpath='{.spec.nodeName}')
 
-# Step 3: Find the nginx master process PID
-ps aux | grep nginx
+# Step 3: Create a privileged node debug pod that stays running
+kubectl run node-strace --image=nicolaka/netshoot --restart=Never --overrides='{
+  "spec": {
+    "nodeName": "'$NODE_NAME'",
+    "hostPID": true,
+    "hostNetwork": true,
+    "tolerations": [{"operator": "Exists"}],
+    "containers": [{
+      "name": "node-strace",
+      "image": "nicolaka/netshoot",
+      "command": ["sleep", "3600"],
+      "securityContext": {"privileged": true}
+    }]
+  }
+}'
+
+kubectl wait --for=condition=Ready pod/node-strace --timeout=30s
+
+# Step 4: Exec into it — find nginx PIDs, strace the worker, send requests
+kubectl exec node-strace -- bash -c '
+  WORKER_PID=$(pidof -s nginx-worker || pidof nginx | tr " " "\n" | tail -1)
+  echo "=== Nginx worker host PID: $WORKER_PID ==="
+
+  strace -p $WORKER_PID -e trace=network,read,write > /tmp/strace.out 2>&1 &
+  STRACE_PID=$!
+  sleep 2
+
+  echo "=== Sending 3 requests ==="
+  curl -s -o /dev/null -w "Request 1: HTTP %{http_code}\n" http://'$POD_IP'
+  curl -s -o /dev/null -w "Request 2: HTTP %{http_code}\n" http://'$POD_IP'
+  curl -s -o /dev/null -w "Request 3: HTTP %{http_code}\n" http://'$POD_IP'
+
+  sleep 3
+  kill $STRACE_PID 2>/dev/null; wait $STRACE_PID 2>/dev/null
+
+  echo ""
+  echo "=== strace output ==="
+  cat /tmp/strace.out
+'
 ```
 
-Expected:
+### Actual strace output:
+
 ```
-root         1  0.0  0.1  12060  5648 ?        Ss   12:00   0:00 nginx: master process
+=== Nginx worker host PID: 11635 ===
+=== Sending 3 requests ===
+Request 1: HTTP 200
+Request 2: HTTP 200
+Request 3: HTTP 200
+
+=== strace output ===
+strace: Process 11635 attached
+accept4(6, {sa_family=AF_INET, sin_port=htons(60668), sin_addr=inet_addr("10.112.129.1")}, [112 => 16], SOCK_NONBLOCK) = 3
+recvfrom(3, "GET / HTTP/1.1\r\nHost: 10.112.129"..., 1024, 0, NULL, NULL) = 77
+sendfile(3, 11, [0] => [612], 612)      = 612
+write(5, "10.112.129.1 - - [21/Mar/2026:05"..., 93) = 93
+setsockopt(3, SOL_TCP, TCP_NODELAY, [1], 4) = 0
+recvfrom(3, "", 1024, 0, NULL, NULL)    = 0
+accept4(6, {sa_family=AF_INET, sin_port=htons(60670), sin_addr=inet_addr("10.112.129.1")}, [112 => 16], SOCK_NONBLOCK) = 3
+recvfrom(3, "GET / HTTP/1.1\r\nHost: 10.112.129"..., 1024, 0, NULL, NULL) = 77
+sendfile(3, 11, [0] => [612], 612)      = 612
+write(5, "10.112.129.1 - - [21/Mar/2026:05"..., 93) = 93
+setsockopt(3, SOL_TCP, TCP_NODELAY, [1], 4) = 0
+recvfrom(3, "", 1024, 0, NULL, NULL)    = 0
+accept4(6, {sa_family=AF_INET, sin_port=htons(60684), sin_addr=inet_addr("10.112.129.1")}, [112 => 16], SOCK_NONBLOCK) = 3
+recvfrom(3, "GET / HTTP/1.1\r\nHost: 10.112.129"..., 1024, 0, NULL, NULL) = 77
+sendfile(3, 11, [0] => [612], 612)      = 612
+write(5, "10.112.129.1 - - [21/Mar/2026:05"..., 93) = 93
+setsockopt(3, SOL_TCP, TCP_NODELAY, [1], 4) = 0
+recvfrom(3, "", 1024, 0, NULL, NULL)    = 0
+strace: Process 11635 detached
 ```
 
-```bash
-# Step 4: Run strace on PID 1 (nginx master)
-strace -p 1
-```
-
-Then, from another terminal, send a request:
-
-```bash
-kubectl port-forward pod/distroless-nginx 8080:80 &
-curl -s http://localhost:8080
-```
-
-Expected strace output:
-```
-strace: Process 1 attached
-epoll_wait(6, [{EPOLLIN, {u32=10, u64=10}}], 512, -1) = 1
-accept4(10, {sa_family=AF_INET, sin_port=htons(54321), sin_addr=inet_addr("10.244.0.1")}, [112->16], SOCK_NONBLOCK|SOCK_CLOEXEC) = 11
-epoll_ctl(6, EPOLL_CTL_ADD, 11, {EPOLLIN|EPOLLEXCLUSIVE|EPOLLRDHUP, {u32=11, u64=11}}) = 0
-...
-read(10, "GET / HTTP/1.1\r\nHost: localhost:8"..., 1024) = 75
-...
-write(10, "HTTP/1.1 200 OK\r\nServer: nginx/1."..., 244) = 244
-```
+Each request shows the full cycle:
+1. `accept4` — accept the incoming connection
+2. `recvfrom` — read the HTTP request
+3. `sendfile` — serve the static file (zero-copy)
+4. `write` — write the access log
+5. `setsockopt(TCP_NODELAY)` — disable Nagle's algorithm before closing
+6. `recvfrom` returns 0 — client closed connection
 
 ---
 
@@ -207,7 +263,7 @@ write(10, "HTTP/1.1 200 OK\r\nServer: nginx/1."..., 244) = 244
 
 ```bash
 kubectl delete pod distroless-nginx
-kubectl delete pod node-debugger-XXXXX  # replace with actual debug pod name
+kubectl delete pod node-strace --force --grace-period=0
 ```
 
 ---
