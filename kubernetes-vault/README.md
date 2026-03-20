@@ -168,6 +168,8 @@ kubectl get pods -n vault -l app.kubernetes.io/name=vault
 **IMPORTANT:** Store `vault-init.json` and `vault-root-token.txt` securely!
 
 **Verify:**
+# Port-forward to Vault
+kubectl port-forward -n vault vault-0 8200:8200
 ```bash
 export VAULT_ADDR='http://127.0.0.1:8200'
 export VAULT_TOKEN=$(cat vault-root-token.txt)
