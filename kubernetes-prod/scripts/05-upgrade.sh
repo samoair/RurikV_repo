@@ -4,14 +4,15 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 TF_DIR="$SCRIPT_DIR/../terraform"
+SSH_KEY="${SSH_KEY:-$HOME/.ssh/yc_key}"
 
 MASTER_IP=$(terraform -chdir="$TF_DIR" output -raw master_public_ip)
-WORKER_IPS=$(terraform -chdir="$TF_DIR" output -raw worker_public_ips)
+WORKER_IPS=$(terraform -chdir="$TF_DIR" output -json worker_public_ips | jq -r '.[]')
 
 # ─── Upgrade master ─────────────────────────────────────────────────────────
 echo "=== Upgrading master node ==="
 
-ssh ubuntu@"$MASTER_IP" <<'REMOTE'
+ssh -i "$SSH_KEY" ubuntu@"$MASTER_IP" <<'REMOTE'
 set -euo pipefail
 
 echo "Current version:"
@@ -35,21 +36,21 @@ REMOTE
 
 # ─── Upgrade workers one by one ────────────────────────────────────────────
 for WORKER_IP in $WORKER_IPS; do
-  WORKER_NAME=$(ssh ubuntu@"$MASTER_IP" "kubectl get nodes -o wide | grep $WORKER_IP | awk '{print \$1}'" || true)
+  WORKER_NAME=$(ssh -i "$SSH_KEY" ubuntu@"$MASTER_IP" "kubectl get nodes -o wide | grep $WORKER_IP | awk '{print \$1}'" || true)
   if [ -z "$WORKER_NAME" ]; then
     # Fallback: derive name from internal IP mapping
-    WORKER_NAME=$(ssh ubuntu@"$WORKER_IP" "hostname")
+    WORKER_NAME=$(ssh -i "$SSH_KEY" ubuntu@"$WORKER_IP" "hostname")
   fi
 
   echo "=== Upgrading worker $WORKER_NAME ($WORKER_IP) ==="
 
   # Cordon and drain from master
   echo "Cordoning and draining $WORKER_NAME..."
-  ssh ubuntu@"$MASTER_IP" "kubectl cordon $WORKER_NAME && kubectl drain $WORKER_NAME --ignore-daemonsets --delete-emptydir-data"
+  ssh -i "$SSH_KEY" ubuntu@"$MASTER_IP" "kubectl cordon $WORKER_NAME && kubectl drain $WORKER_NAME --ignore-daemonsets --delete-emptydir-data"
 
   # Upgrade on the worker
   echo "Running kubeadm upgrade on $WORKER_NAME..."
-  ssh ubuntu@"$WORKER_IP" <<'REMOTE_WORKER'
+  ssh -i "$SSH_KEY" ubuntu@"$WORKER_IP" <<'REMOTE_WORKER'
 set -euo pipefail
 
 sudo apt-get update
@@ -63,11 +64,11 @@ REMOTE_WORKER
 
   # Uncordon from master
   echo "Uncordoning $WORKER_NAME..."
-  ssh ubuntu@"$MASTER_IP" "kubectl uncordon $WORKER_NAME"
+  ssh -i "$SSH_KEY" ubuntu@"$MASTER_IP" "kubectl uncordon $WORKER_NAME"
 
   echo "$WORKER_NAME upgraded."
 done
 
 echo ""
 echo "=== Cluster status after upgrade ==="
-ssh ubuntu@"$MASTER_IP" "kubectl get nodes -o wide"
+ssh -i "$SSH_KEY" ubuntu@"$MASTER_IP" "kubectl get nodes -o wide"

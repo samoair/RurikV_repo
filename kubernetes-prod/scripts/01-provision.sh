@@ -14,6 +14,6 @@ terraform apply tfplan
 echo "=== VMs provisioned ==="
 echo "Master public IP:  $(terraform output -raw master_public_ip)"
 echo "Master internal IP: $(terraform output -raw master_internal_ip)"
-echo "Worker public IPs:  $(terraform output -raw worker_public_ips)"
+echo "Worker public IPs:  $(terraform output -json worker_public_ips | jq -r '.[]' | tr '\n' ' ')"
 echo ""
 echo "Wait ~3 minutes for cloud-init to finish, then run 02-init-master.sh"
