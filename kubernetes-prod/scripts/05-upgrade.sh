@@ -16,20 +16,30 @@ ssh -i "$SSH_KEY" ubuntu@"$MASTER_IP" <<'REMOTE'
 set -euo pipefail
 
 echo "Current version:"
-kubectl version --short
+kubectl version --client
+
+# Switch apt repo to 1.35 and upgrade kubeadm first
+echo "Switching to Kubernetes 1.35 repo..."
+sudo sed -i 's|stable:/v1.34|stable:/v1.35|g' /etc/apt/sources.list.d/kubernetes.list
+sudo apt-get update
+sudo apt-get install -y --allow-change-held-packages kubeadm=1.35.*
 
 echo "Checking upgrade plan..."
 sudo kubeadm upgrade plan
 
 echo "Applying upgrade to v1.35..."
-sudo kubeadm upgrade apply v1.35.x -y
+TARGET_VERSION=$(sudo kubeadm upgrade plan 2>&1 | grep -oP 'v1\.35\.\d+' | head -1)
+sudo kubeadm upgrade apply "$TARGET_VERSION" -y
 
 echo "Upgrading kubelet and kubectl..."
-sudo apt-get update
 sudo apt-get install -y --allow-change-held-packages kubelet=1.35.* kubectl=1.35.*
-sudo apt-mark hold kubelet kubectl
+sudo apt-mark hold kubelet kubeadm kubectl
 sudo systemctl daemon-reload
 sudo systemctl restart kubelet
+
+# Update kubeconfig (certificates were rotated during upgrade)
+sudo cp -f /etc/kubernetes/admin.conf "$HOME/.kube/config"
+sudo chown "$(id -u):$(id -g)" "$HOME/.kube/config"
 
 echo "Master upgraded."
 REMOTE
@@ -38,7 +48,6 @@ REMOTE
 for WORKER_IP in $WORKER_IPS; do
   WORKER_NAME=$(ssh -i "$SSH_KEY" ubuntu@"$MASTER_IP" "kubectl get nodes -o wide | grep $WORKER_IP | awk '{print \$1}'" || true)
   if [ -z "$WORKER_NAME" ]; then
-    # Fallback: derive name from internal IP mapping
     WORKER_NAME=$(ssh -i "$SSH_KEY" ubuntu@"$WORKER_IP" "hostname")
   fi
 
@@ -53,11 +62,19 @@ for WORKER_IP in $WORKER_IPS; do
   ssh -i "$SSH_KEY" ubuntu@"$WORKER_IP" <<'REMOTE_WORKER'
 set -euo pipefail
 
+# Kill unattended-upgrades if holding dpkg lock
+sudo systemctl stop unattended-upgrades 2>/dev/null || true
+sudo killall apt-get dpkg unattended-upgr 2>/dev/null || true
+sleep 2
+sudo rm -f /var/lib/dpkg/lock-frontend /var/lib/dpkg/lock /var/cache/apt/archives/lock
+sudo dpkg --configure -a
+
+sudo sed -i 's|stable:/v1.34|stable:/v1.35|g' /etc/apt/sources.list.d/kubernetes.list
 sudo apt-get update
 sudo apt-get install -y --allow-change-held-packages kubeadm=1.35.*
 sudo kubeadm upgrade node
 sudo apt-get install -y --allow-change-held-packages kubelet=1.35.*
-sudo apt-mark hold kubelet
+sudo apt-mark hold kubelet kubeadm kubectl
 sudo systemctl daemon-reload
 sudo systemctl restart kubelet
 REMOTE_WORKER
