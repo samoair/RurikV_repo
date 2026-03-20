@@ -6,10 +6,10 @@ Deploy a bare-metal Kubernetes cluster from scratch on Yandex Cloud VMs using `k
 
 ## Infrastructure
 
-| Role   | Count | vCPU | RAM   | OS             |
-|--------|-------|------|-------|----------------|
-| Master | 1     | 2    | 8 GB  | Ubuntu 22.04   |
-| Worker | 3     | 2    | 8 GB  | Ubuntu 22.04   |
+| Role   | Count | vCPU | RAM   | OS           |
+|--------|-------|------|-------|--------------|
+| Master | 1     | 2    | 8 GB  | Ubuntu 22.04 |
+| Worker | 3     | 2    | 8 GB  | Ubuntu 22.04 |
 
 **Kubernetes versions:**
 - Initial: **1.34.x** (one minor below latest)
@@ -17,32 +17,25 @@ Deploy a bare-metal Kubernetes cluster from scratch on Yandex Cloud VMs using `k
 
 ## How It Works
 
-Terraform provisions 4 VMs with **cloud-init** that automatically performs all node preparation:
-- Disables swap
-- Enables kernel modules (`overlay`, `br_netfilter`)
+Terraform provisions 4 VMs with **cloud-init** that automatically:
+- Disables swap, enables kernel modules (`overlay`, `br_netfilter`)
 - Configures sysctl for networking
 - Installs `containerd` with SystemdCgroup
 - Installs `kubeadm`, `kubelet`, `kubectl` v1.34.x (pinned)
 
-After provisioning, shell scripts initialize the control plane, join workers, install Flannel, and perform the rolling upgrade.
+Shell scripts then initialize the control plane, join workers, install Flannel, and perform the rolling upgrade.
+
+Credentials come from `YC_TOKEN`, `YC_CLOUD_ID`, `YC_FOLDER_ID` environment variables (set via `yc init`).
 
 ## Quick Start
 
 ### Prerequisites
 
 - [Terraform](https://developer.hashicorp.com/terraform/downloads) >= 1.0
-- [Yandex Cloud CLI](https://cloud.yandex.ru/docs/cli/quickstart) installed and authenticated (`yc init`)
-- SSH key pair for VM access
+- [Yandex Cloud CLI](https://cloud.yandex.ru/docs/cli/quickstart) installed and authenticated
+- SSH key at `~/.ssh/yc_key.pub` (or set `TF_VAR_ssh_public_key_path`)
 
-### 1. Configure
-
-Edit `terraform/terraform.tfvars` — set your folder ID:
-
-```hcl
-yc_folder_id = "<your-folder-id>"
-```
-
-### 2. Provision VMs
+### 1. Provision VMs
 
 ```bash
 cd kubernetes-prod
@@ -51,25 +44,25 @@ cd kubernetes-prod
 
 Wait ~3 minutes for cloud-init to complete on all nodes.
 
-### 3. Initialize the control plane
+### 2. Initialize the control plane
 
 ```bash
 ./scripts/02-init-master.sh
 ```
 
-### 4. Join worker nodes
+### 3. Join worker nodes
 
 ```bash
 ./scripts/03-join-workers.sh
 ```
 
-### 5. Install Flannel CNI
+### 4. Install Flannel CNI
 
 ```bash
 ./scripts/04-apply-flannel.sh
 ```
 
-### 6. Verify
+### 5. Verify
 
 ```bash
 ssh ubuntu@$(terraform -chdir=terraform output -raw master_public_ip) \
@@ -127,9 +120,8 @@ kubernetes-prod/
 │   ├── 05-upgrade.sh                   # Rolling upgrade to 1.35.x
 │   └── destroy.sh                      # Destroy all VMs
 └── terraform/
-    ├── main.tf                         # YC VM definitions (compute_instance)
-    ├── variables.tf                    # Input variables
-    ├── terraform.tfvars                # Your values (folder ID, etc.)
+    ├── main.tf                         # YC VM definitions
+    ├── variables.tf                    # SSH key path
     ├── cloud-init-master.yaml          # Master node bootstrap
     └── cloud-init-worker.yaml          # Worker node bootstrap
 ```

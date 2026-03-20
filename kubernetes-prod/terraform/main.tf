@@ -7,70 +7,56 @@ terraform {
       version = "~> 0.191"
     }
   }
-
-  backend "local" {}
 }
 
-provider "yandex" {
-  cloud_id  = var.yc_cloud_id
-  folder_id = var.yc_folder_id
-  zone      = var.zone
-}
+# Credentials are picked up from YC_TOKEN, YC_CLOUD_ID, YC_FOLDER_ID env vars
+provider "yandex" {}
 
 # ─── VPC ─────────────────────────────────────────────────────────────────────
 
 resource "yandex_vpc_network" "this" {
-  name = var.network_name
+  name = "prod-network"
 }
 
 resource "yandex_vpc_subnet" "this" {
-  name           = var.subnet_name
+  name           = "prod-subnet"
   network_id     = yandex_vpc_network.this.id
-  zone           = var.zone
-  v4_cidr_blocks = [var.subnet_cidr]
+  v4_cidr_blocks = ["192.168.10.0/24"]
 }
 
 # ─── Service Account ─────────────────────────────────────────────────────────
 
 resource "yandex_iam_service_account" "this" {
-  name = var.sa_name
-}
-
-resource "yandex_resourcemanager_folder_iam_member" "sa_editor" {
-  folder_id = var.yc_folder_id
-  role      = "editor"
-  member    = "serviceAccount:${yandex_iam_service_account.this.id}"
+  name = "k8s-prod-sa"
 }
 
 # ─── Master Node ─────────────────────────────────────────────────────────────
 
 resource "yandex_compute_instance" "master" {
-  name        = "${var.cluster_name}-master"
+  name        = "prod-master"
   hostname    = "master"
-  platform_id = var.platform_id
-  zone        = var.zone
+  platform_id = "standard-v3"
 
   resources {
-    cores  = var.master_cores
-    memory = var.master_memory
+    cores  = 2
+    memory = 8
   }
 
   boot_disk {
     initialize_params {
-      image_id = var.image_id
-      size     = var.disk_size
-      type     = var.disk_type
+      image_id = "fd81radk00nmm2jpqh94" # Ubuntu 22.04 LTS v20251229
+      size     = 64
+      type     = "network-ssd"
     }
   }
 
   network_interface {
-    subnet_id          = yandex_vpc_subnet.this.id
-    nat                = true
-    security_group_ids = []
+    subnet_id = yandex_vpc_subnet.this.id
+    nat       = true
   }
 
   metadata = {
-    ssh-keys  = "ubuntu:${file(var.ssh_public_key_path)}"
+    ssh-keys  = "ubuntu:${file(pathexpand(var.ssh_public_key_path))}"
     user-data = file("${path.module}/cloud-init-master.yaml")
   }
 }
@@ -78,33 +64,31 @@ resource "yandex_compute_instance" "master" {
 # ─── Worker Nodes ────────────────────────────────────────────────────────────
 
 resource "yandex_compute_instance" "worker" {
-  count       = var.worker_count
-  name        = "${var.cluster_name}-worker-${count.index + 1}"
+  count       = 3
+  name        = "prod-worker-${count.index + 1}"
   hostname    = "worker${count.index + 1}"
-  platform_id = var.platform_id
-  zone        = var.zone
+  platform_id = "standard-v3"
 
   resources {
-    cores  = var.worker_cores
-    memory = var.worker_memory
+    cores  = 2
+    memory = 8
   }
 
   boot_disk {
     initialize_params {
-      image_id = var.image_id
-      size     = var.disk_size
-      type     = var.disk_type
+      image_id = "fd81radk00nmm2jpqh94"
+      size     = 64
+      type     = "network-ssd"
     }
   }
 
   network_interface {
-    subnet_id          = yandex_vpc_subnet.this.id
-    nat                = true
-    security_group_ids = []
+    subnet_id = yandex_vpc_subnet.this.id
+    nat       = true
   }
 
   metadata = {
-    ssh-keys  = "ubuntu:${file(var.ssh_public_key_path)}"
+    ssh-keys  = "ubuntu:${file(pathexpand(var.ssh_public_key_path))}"
     user-data = file("${path.module}/cloud-init-worker.yaml")
   }
 }
