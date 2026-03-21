@@ -15,25 +15,25 @@ Deploy a highly available Kubernetes cluster with 3 control-plane nodes and 2 wo
 
 ```
                   ┌──────────────────────────────────┐
-                  │   nginx load balancer (per node)  │
-                  │        localhost:6443             │
+                  │   nginx load balancer (per node) │
+                  │        localhost:6443            │
                   └──────────┬───────────────────────┘
                              │
               ┌──────────────┼──────────────┐
               │              │              │
-         ┌────┴────┐   ┌────┴────┐   ┌────┴────┐
-         │ master1 │   │ master2 │   │ master3 │
-         │ etcd1   │   │ etcd2   │   │ etcd3   │
-         │ API     │   │ API     │   │ API     │
-         └─────────┘   └─────────┘   └─────────┘
+         ┌────┴────┐    ┌────┴────┐    ┌────┴────┐
+         │ master1 │    │ master2 │    │ master3 │
+         │ etcd1   │    │ etcd2   │    │ etcd3   │
+         │ API     │    │ API     │    │ API     │
+         └─────────┘    └─────────┘    └─────────┘
               │              │              │
               └──────────────┼──────────────┘
                              │
                     ┌────────┴────────┐
                     │                 │
-               ┌────┴────┐      ┌────┴────┐
-               │ worker1 │      │ worker2 │
-               └─────────┘      └─────────┘
+               ┌────┴────┐       ┌────┴────┐
+               │ worker1 │       │ worker2 │
+               └─────────┘       └─────────┘
 ```
 
 Stacked etcd topology: each master runs API server, scheduler, controller-manager, and etcd.
@@ -42,7 +42,7 @@ Stacked etcd topology: each master runs API server, scheduler, controller-manage
 
 - [Terraform](https://developer.hashicorp.com/terraform/downloads) >= 1.0
 - [Yandex Cloud CLI](https://cloud.yandex.ru/docs/cli/quickstart) — authenticated (`yc init`)
-- [Python](https://www.python.org/) 3.10+ (for Ansible)
+- Python 3.12 (`brew install python@3.12`) — Ansible requires 3.10-3.12
 - SSH key at `~/.ssh/yc_key`
 
 ## Quick Start

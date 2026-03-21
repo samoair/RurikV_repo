@@ -6,16 +6,11 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 TF_DIR="$SCRIPT_DIR/../terraform"
 INV_DIR="$SCRIPT_DIR/../inventory"
 
-MASTER_PUB_IPS=$(terraform -chdir="$TF_DIR" output -json master_public_ips  | jq -r '.[]')
-MASTER_INT_IPS=$(terraform -chdir="$TF_DIR" output -json master_internal_ips | jq -r '.[]')
-WORKER_PUB_IPS=$(terraform -chdir="$TF_DIR" output -json worker_public_ips  | jq -r '.[]')
-WORKER_INT_IPS=$(terraform -chdir="$TF_DIR" output -json worker_internal_ips | jq -r '.[]')
-
-# Convert space-separated to arrays
-read -ra MPUB <<< "$MASTER_PUB_IPS"
-read -ra MINT <<< "$MASTER_INT_IPS"
-read -ra WPUB <<< "$WORKER_PUB_IPS"
-read -ra WINT <<< "$WORKER_INT_IPS"
+# Read JSON arrays into bash arrays
+mapfile -t MPUB < <(terraform -chdir="$TF_DIR" output -json master_public_ips  | jq -r '.[]')
+mapfile -t MINT < <(terraform -chdir="$TF_DIR" output -json master_internal_ips | jq -r '.[]')
+mapfile -t WPUB < <(terraform -chdir="$TF_DIR" output -json worker_public_ips  | jq -r '.[]')
+mapfile -t WINT < <(terraform -chdir="$TF_DIR" output -json worker_internal_ips | jq -r '.[]')
 
 # Generate inventory.ini
 cat > "$INV_DIR/inventory.ini" <<EOF
