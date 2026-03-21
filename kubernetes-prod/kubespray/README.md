@@ -82,6 +82,23 @@ After deployment, kubeconfig is saved locally. To check:
 export KUBECONFIG=~/kubespray/inventory/ha-cluster/artifacts/admin.conf
 kubectl get nodes -o wide
 ```
+The kubeconfig points to the internal IP 192.168.20.15 which is unreachable from your local machine. You need an SSH
+ tunnel.
+ 
+ find the master public IP:
+
+ terraform -chdir=terraform output -json master_public_ips | jq -r '.[0]'
+
+ #### Forward localhost:6443 to master1 via SSH tunnel
+ ssh -i ~/.ssh/yc_key -L 6443:192.168.20.15:6443 -fN ubuntu@<MASTER1_PUBLIC_IP>
+
+ sed -i '' 's|server: https://192.168.20.15:6443|server: https://127.0.0.1:6443|' ~/kubespray/inventory/ha-cluster/artifacts/admin.conf
+
+ #### Now kubectl will work
+ kubectl get nodes -o wide
+
+ The internal IP is only reachable from within the YC network. The SSH tunnel makes it accessible locally on
+ localhost:6443.
 
 Expected output:
 
